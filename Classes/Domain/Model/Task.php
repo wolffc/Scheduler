@@ -62,14 +62,14 @@ class Task
 
     /**
      * @var ?\DateTime
-     * @ORM\Column(nullable=true)
      */
+    #[ORM\Column(nullable: true)]
     protected $lastExecution;
 
     /**
      * @var \DateTime
-     * @ORM\Column(nullable=true)
      */
+    #[ORM\Column(nullable: true)]
     protected $nextExecution;
 
     /**
@@ -80,8 +80,8 @@ class Task
 
     /**
      * @var string
-     * @ORM\Column(type="text")
      */
+    #[ORM\Column(type: 'text')]
     protected string $description;
 
 
