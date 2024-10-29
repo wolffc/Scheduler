@@ -1,4 +1,5 @@
 <?php
+
 namespace Ttree\Scheduler\Command;
 
 /*                                                                        *
@@ -10,6 +11,7 @@ namespace Ttree\Scheduler\Command;
  *                                                                        */
 
 use Assert\Assertion;
+use DateTimeInterface;
 use Neos\Flow\Persistence\PersistenceManagerInterface;
 use Neos\Flow\Utility\Environment;
 use Neos\Utility\Files;
@@ -22,18 +24,17 @@ use Neos\Flow\Cli\CommandController;
 use Neos\Flow\ObjectManagement\ObjectManagerInterface;
 use Neos\Utility\Lock\Lock;
 use Neos\Utility\Lock\LockNotAcquiredException;
+use Ttree\Scheduler\Task\TaskTypeEnum;
 
 /**
  * Task Command Controller
  */
 class TaskCommandController extends CommandController
 {
-
     /**
      * @Flow\Inject
-     * @var TaskService
      */
-    protected $taskService;
+    protected TaskService $taskService;
 
     /**
      * @Flow\Inject(lazy=false)
@@ -42,28 +43,24 @@ class TaskCommandController extends CommandController
     protected $objectManager;
 
     /**
-     * @var PersistenceManagerInterface
      * @Flow\Inject
      */
-    protected $persistenceManager;
+    protected PersistenceManagerInterface $persistenceManager;
 
     /**
-     * @var Environment
      * @Flow\Inject
      */
-    protected $environment;
+    protected Environment $environment;
 
     /**
      * @Flow\InjectConfiguration(package="Ttree.Scheduler", path="allowParallelExecution")
-     * @var boolean
      */
-    protected $allowParallelExecution = true;
+    protected bool $allowParallelExecution = true;
 
     /**
      * @Flow\InjectConfiguration(package="Ttree.Scheduler", path="lockStrategyClassName")
-     * @var boolean
      */
-    protected $lockStrategyClassName = '';
+    protected string $lockStrategyClassName = '';
 
     /**
      * @var Lock
@@ -76,10 +73,12 @@ class TaskCommandController extends CommandController
      */
     public function initializeObject(): void
     {
-        $lockManager = new LockManager($this->lockStrategyClassName, ['lockDirectory' => Files::concatenatePaths([
-            $this->environment->getPathToTemporaryDirectory(),
-            'Lock'
-        ])]);
+        $lockManager = new LockManager($this->lockStrategyClassName, [
+            'lockDirectory' => Files::concatenatePaths([
+                $this->environment->getPathToTemporaryDirectory(),
+                'Lock'
+            ])
+        ]);
         Lock::setLockManager($lockManager);
     }
 
@@ -88,7 +87,7 @@ class TaskCommandController extends CommandController
      *
      * @param boolean $dryRun do not execute tasks
      */
-    public function runCommand($dryRun = false)
+    public function runCommand(bool $dryRun = false): void
     {
         if ($this->allowParallelExecution !== true) {
             try {
@@ -100,11 +99,10 @@ class TaskCommandController extends CommandController
         }
 
         foreach ($this->taskService->getDueTasks() as $taskDescriptor) {
-            /** @var Task $task */
-            $task = $taskDescriptor['object'];
-            $arguments = [$task->getImplementation(), $taskDescriptor['identifier']];
+            $task = $taskDescriptor->task;
+            $arguments = [$task->getImplementation(), $taskDescriptor->identifier];
 
-            $this->markTaskAsRun($task, $taskDescriptor['type']);
+            $this->markTaskAsRun($task, $taskDescriptor->type);
             try {
                 if (!$dryRun) {
                     $task->execute($this->objectManager);
@@ -125,13 +123,19 @@ class TaskCommandController extends CommandController
     /**
      * List all tasks
      */
-    public function listCommand()
+    public function listCommand(): void
     {
         $tasks = [];
-        foreach ($this->taskService->getTasks() as $task) {
-            $taskDescriptor = $task;
-            unset($taskDescriptor['object']);
-            $tasks[] = $taskDescriptor;
+        foreach ($this->taskService->getTasks() as $taskDescriptor) {
+            $tasks[] = [
+                $taskDescriptor->type->value,
+                $taskDescriptor->getEnabledLabel(),
+                $taskDescriptor->identifier,
+                $taskDescriptor->task->getImplementation(),
+                $taskDescriptor->task->getNextExecution()->format(DateTimeInterface::ATOM),
+                $taskDescriptor->task->getLastExecution()?->format(DateTimeInterface::ATOM),
+                $taskDescriptor->task->getDescription()
+            ];
         }
         if (count($tasks)) {
             $this->output->outputTable($tasks, [
@@ -154,20 +158,22 @@ class TaskCommandController extends CommandController
      *
      * @param string $taskIdentifier
      */
-    public function runSingleCommand($taskIdentifier)
+    public function runSingleCommand(string $taskIdentifier): void
     {
-
         $taskDescriptors = $this->taskService->getTasks();
-        Assertion::keyExists($taskDescriptors, $taskIdentifier, sprintf('Task with identifier %s does not exist.', $taskIdentifier));
+        Assertion::keyExists(
+            $taskDescriptors,
+            $taskIdentifier,
+            sprintf('Task with identifier %s does not exist.', $taskIdentifier)
+        );
 
         $taskDescriptor = $taskDescriptors[$taskIdentifier];
-        /** @var Task $task */
-        $task = $taskDescriptor['object'];
-        $arguments = [$task->getImplementation(), $taskDescriptor['identifier']];
 
-        $this->markTaskAsRun($task, $taskDescriptor['type']);
+        $arguments = [$taskDescriptor->task->getImplementation(), $taskDescriptor->identifier];
+
+        $this->markTaskAsRun($taskDescriptor->task, $taskDescriptor->type);
         try {
-            $taskDescriptor['object']->execute($this->objectManager);
+            $taskDescriptor->task->execute($this->objectManager);
             $this->tellStatus('[Success] Run "%s" (%s)', $arguments);
         } catch (\Exception $exception) {
             $this->tellStatus('[Error] Task "%s" (%s) throw an exception, check your log', $arguments);
@@ -177,7 +183,7 @@ class TaskCommandController extends CommandController
     /**
      * @param Task $task
      */
-    public function removeCommand(Task $task)
+    public function removeCommand(Task $task): void
     {
         $this->taskService->remove($task);
     }
@@ -187,10 +193,10 @@ class TaskCommandController extends CommandController
      *
      * @param Task $task persistent task identifier, see task:list
      */
-    public function enableCommand(Task $task)
+    public function enableCommand(Task $task): void
     {
         $task->enable();
-        $this->taskService->update($task, TaskInterface::TYPE_PERSISTED);
+        $this->taskService->update($task, TaskTypeEnum::TYPE_PERSISTED);
     }
 
     /**
@@ -198,10 +204,10 @@ class TaskCommandController extends CommandController
      *
      * @param Task $task persistent task identifier, see task:list
      */
-    public function disableCommand(Task $task)
+    public function disableCommand(Task $task): void
     {
         $task->disable();
-        $this->taskService->update($task, TaskInterface::TYPE_PERSISTED);
+        $this->taskService->update($task, TaskTypeEnum::TYPE_PERSISTED);
     }
 
     /**
@@ -209,49 +215,36 @@ class TaskCommandController extends CommandController
      *
      * @param string $expression cron expression for the task scheduling
      * @param string $task task class implementation
-     * @param string $arguments task arguments, can be a valid JSON array
+     * @param ?string $arguments task arguments, can be a valid JSON array
      * @param string $description task description
      */
-    public function registerCommand($expression, $task, $arguments = null, $description = '')
+    public function registerCommand(string $expression, string $task, ?string $arguments = null, string $description = ''): void
     {
-        if ($arguments !== null) {
-            $arguments = json_decode($arguments, true);
-            Assertion::isArray($arguments, 'Arguments is not a valid JSON array');
+
+        if (!empty($arguments)) {
+            $arguments = json_decode($arguments, true, flags: JSON_THROW_ON_ERROR);
+            assert(is_array($arguments));
         }
+
         $this->taskService->create($expression, $task, $arguments ?: [], $description);
     }
 
     /**
      * @param string $message
-     * @param array $arguments
+     * @param array<bool|float|int|string|null> $arguments
      */
-    protected function tellStatus($message, array $arguments = null)
+    protected function tellStatus(string $message, array $arguments = []): void
     {
         $message = vsprintf($message, $arguments);
-        $this->outputLine('%s: %s', [date(\DateTime::ISO8601), $message]);
+        $this->outputLine('%s: %s', [date(DateTimeInterface::ATOM), $message]);
     }
 
-    /**
-     * @param Task $task
-     * @param string $taskType
-     */
-    protected function markFailedTaskAsRun(Task $task, $taskType)
-    {
-        $task->setLastExecution(new \DateTime());
-        $task->initializeNextExecution();
-        $this->taskService->update($task, $taskType);
-    }
-
-    /**
-     * @param Task $task
-     * @param bool $taskType
-     */
-    protected function markTaskAsRun(Task $task, $taskType)
+    protected function markTaskAsRun(Task $task, TaskTypeEnum $taskType): void
     {
         $task->markAsRun();
         $this->taskService->update($task, $taskType);
-        if ($taskType === TaskInterface::TYPE_PERSISTED) {
-            $this->persistenceManager->whitelistObject($task);
+        if ($taskType === TaskTypeEnum::TYPE_PERSISTED) {
+            $this->persistenceManager->allowObject($task);
             $this->persistenceManager->persistAll(true);
         }
     }

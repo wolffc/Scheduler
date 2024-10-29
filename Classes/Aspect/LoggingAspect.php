@@ -1,4 +1,5 @@
 <?php
+
 namespace Ttree\Scheduler\Aspect;
 
 /*                                                                        *
@@ -25,7 +26,6 @@ use Neos\Flow\Persistence\PersistenceManagerInterface;
  */
 class LoggingAspect
 {
-
     /**
      * @Flow\Inject
      * @var LoggerInterface
@@ -47,7 +47,7 @@ class LoggingAspect
     /**
      * @Flow\Pointcut("within(Ttree\Scheduler\Task\TaskInterface) && method(.*->execute())")
      */
-    public function allTasks()
+    public function allTasks(): void
     {
     }
 
@@ -55,7 +55,7 @@ class LoggingAspect
      * @Flow\Before("Ttree\Scheduler\Aspect\LoggingAspect->allTasks")
      * @param JoinPoint $jointPoint
      */
-    public function logTaskExecutionBegin(JoinPoint $jointPoint)
+    public function logTaskExecutionBegin(JoinPoint $jointPoint): void
     {
         /** @var TaskInterface $task */
         $task = $jointPoint->getProxy();
@@ -66,7 +66,7 @@ class LoggingAspect
      * @Flow\After("Ttree\Scheduler\Aspect\LoggingAspect->allTasks")
      * @param JoinPoint $jointPoint
      */
-    public function logTaskExecutionEnd(JoinPoint $jointPoint)
+    public function logTaskExecutionEnd(JoinPoint $jointPoint): void
     {
         /** @var Task $task */
         $task = $jointPoint->getProxy();
@@ -78,8 +78,11 @@ class LoggingAspect
      * @param JoinPoint $jointPoint
      * @throws \Exception
      */
-    public function logTaskException(JoinPoint $jointPoint)
+    public function logTaskException(JoinPoint $jointPoint): void
     {
+        if ($jointPoint->getException() === null) {
+            return;
+        }
         $message = $this->throwableStorage->logThrowable($jointPoint->getException());
         $this->logger->error($message, [
             'task' => $jointPoint->getClassName()

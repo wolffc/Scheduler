@@ -1,4 +1,5 @@
 <?php
+
 namespace Ttree\Scheduler\Domain\Repository;
 
 /*                                                                        *
@@ -22,9 +23,8 @@ use Neos\Flow\Utility\Now;
  */
 class TaskRepository extends Repository
 {
-
     /**
-     * @var array
+     * @var array<string,string>
      */
     protected $defaultOrderings = [
         'status' => QueryInterface::ORDER_ASCENDING,
@@ -33,15 +33,17 @@ class TaskRepository extends Repository
 
     /**
      * @param string $identifier
-     * @return Task
+     * @return Task|null
      */
-    public function findByIdentifier($identifier)
+    public function findByIdentifier($identifier): ?Task
     {
-        return parent::findByIdentifier($identifier);
+        $object =  parent::findByIdentifier($identifier);
+        assert(is_null($object) || $object instanceof Task);
+        return $object;
     }
 
     /**
-     * @return \Neos\Flow\Persistence\QueryResultInterface
+     * @return \Neos\Flow\Persistence\QueryResultInterface<Task>
      */
     public function findDueTasks()
     {
@@ -74,10 +76,10 @@ class TaskRepository extends Repository
 
     /**
      * @param string $implementation
-     * @param array $arguments
+     * @param array<mixed> $arguments
      * @return Task
      */
-    public function findOneByImplementationAndArguments($implementation, array $arguments)
+    public function findOneByImplementationAndArguments(string $implementation, array $arguments)
     {
         $argumentsHash = sha1(serialize($arguments));
         $query = $this->createQuery();
@@ -87,6 +89,8 @@ class TaskRepository extends Repository
             $query->equals('argumentsHash', $argumentsHash)
         ));
 
-        return $query->execute()->getFirst();
+        $task = $query->execute()->getFirst();
+        assert($task instanceof Task);
+        return $task;
     }
 }

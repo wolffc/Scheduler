@@ -1,4 +1,5 @@
 <?php
+
 namespace Ttree\Scheduler\Domain\Model;
 
 /*                                                                        *
@@ -23,7 +24,6 @@ use Neos\Flow\Utility\Now;
  */
 class Task
 {
-
     const STATUS_DISABLED = 0;
     const STATUS_ENABLED = 1;
 
@@ -45,7 +45,7 @@ class Task
     protected $implementation;
 
     /**
-     * @var array
+     * @var array<mixed>
      */
     protected $arguments;
 
@@ -61,7 +61,7 @@ class Task
     protected $creationDate;
 
     /**
-     * @var \DateTime
+     * @var ?\DateTime
      * @ORM\Column(nullable=true)
      */
     protected $lastExecution;
@@ -73,24 +73,22 @@ class Task
     protected $nextExecution;
 
     /**
-     * @var CronExpression
+     * @var CronExpression|null
      * @Flow\Transient
      */
-    protected $cronExpression;
+    protected ?CronExpression $cronExpression;
 
     /**
      * @var string
      * @ORM\Column(type="text")
      */
-    protected $description;
+    protected string $description;
+
 
     /**
-     * @param string $expression
-     * @param string $implementation
-     * @param array $arguments
-     * @param string $description
+     * @param array<mixed> $arguments
      */
-    public function __construct($expression, $implementation, array $arguments = [], $description = '')
+    public function __construct(string $expression, string $implementation, array $arguments = [], string $description = '')
     {
         $this->disable();
         $this->setExpression($expression);
@@ -101,10 +99,7 @@ class Task
         $this->initializeNextExecution();
     }
 
-    /**
-     * Initialize Object
-     */
-    public function getCronExpression()
+    public function getCronExpression(): CronExpression
     {
         if ($this->cronExpression === null) {
             $this->cronExpression = CronExpression::factory($this->expression);
@@ -112,35 +107,27 @@ class Task
         return $this->cronExpression;
     }
 
-    /**
-     * @return boolean
-     */
-    public function isDue()
+
+    public function isDue(): bool
     {
         $now = new Now();
         return $this->nextExecution <= $now;
     }
 
-    /**
-     * @return \DateTime
-     */
-    public function getPreviousRunDate()
+
+    public function getPreviousRunDate(): \DateTime
     {
         return $this->getCronExpression()->getPreviousRunDate();
     }
 
-    /**
-     * @return boolean
-     */
-    public function isDisabled()
+
+    public function isDisabled(): bool
     {
         return $this->status === self::STATUS_DISABLED;
     }
 
-    /**
-     * @return boolean
-     */
-    public function isEnabled()
+
+    public function isEnabled(): bool
     {
         return $this->status === self::STATUS_ENABLED;
     }
@@ -148,7 +135,7 @@ class Task
     /**
      * @return void
      */
-    public function enable()
+    public function enable(): void
     {
         $this->status = self::STATUS_ENABLED;
     }
@@ -156,25 +143,17 @@ class Task
     /**
      * @return void
      */
-    public function disable()
+    public function disable(): void
     {
         $this->status = self::STATUS_DISABLED;
     }
 
-    /**
-     * {@inheritdoc}
-     *
-     * @return string
-     */
-    public function getExpression()
+    public function getExpression(): string
     {
         return $this->expression;
     }
 
-    /**
-     * @param string $expression
-     */
-    public function setExpression($expression)
+    public function setExpression(string $expression): void
     {
         /* Slashes in annotaion expressions of dynamic tasks have to be double-escaped due to proxy classes.
         For the cron expression, the remaining backslash needs to be removed here. */
@@ -182,80 +161,61 @@ class Task
         $this->initializeNextExecution();
     }
 
-    /**
-     * @return string
-     */
-    public function getImplementation()
+    public function getImplementation(): string
     {
         return $this->implementation;
     }
 
-    /**
-     * @param string $implementation
-     */
-    public function setImplementation($implementation)
+    public function setImplementation(string $implementation): void
     {
         $this->implementation = $implementation;
     }
 
     /**
-     * @return array
+     * @return array<mixed>
      */
-    public function getArguments()
+    public function getArguments(): array
     {
         return $this->arguments;
     }
 
     /**
-     * @param array $arguments
+     * @param array<mixed> $arguments
      */
-    public function setArguments($arguments)
+    public function setArguments($arguments): void
     {
         $this->arguments = $arguments;
         $this->argumentsHash = sha1(serialize($arguments));
     }
 
-    /**
-     * {@inheritdoc}
-     *
-     * @return void
-     */
-    public function execute(ObjectManagerInterface $objectManager)
+    public function execute(ObjectManagerInterface $objectManager): void
     {
-        /** @var TaskInterface $task */
         $task = $objectManager->get($this->implementation, $this);
+        assert($task instanceof TaskInterface);
         $task->execute($this->arguments);
     }
 
-    /**
-     * @return void
-     */
-    public function initializeNextExecution()
+
+    public function initializeNextExecution(): void
     {
         $this->nextExecution = $this->getCronExpression()->getNextRunDate();
     }
 
-    /**
-     * @return \DateTime
-     */
-    public function getCreationDate()
+    public function getCreationDate(): \DateTime
     {
         return clone $this->creationDate;
     }
 
-    /**
-     * @return \DateTime
-     */
-    public function getLastExecution()
+    public function getLastExecution(): ?\DateTime
     {
         return $this->lastExecution ? clone $this->lastExecution : null;
     }
 
     /**
-     * @param string
+     * @param \DateTime|string|null $currentTime
      * @return \DateTime
      */
-    public function getNextExecution($currentTime = null)
+    public function getNextExecution($currentTime = null): \DateTime
     {
         if ($currentTime) {
             return $this->getCronExpression()->getNextRunDate($currentTime);
@@ -264,23 +224,17 @@ class Task
         }
     }
 
-    /**
-     * @return String
-     */
-    public function getDescription()
+    public function getDescription(): string
     {
         return $this->description;
     }
 
-    /**
-     * @param String $description
-     */
-    public function setDescription($description)
+    public function setDescription(string $description): void
     {
         $this->description = $description;
     }
 
-    public function markAsRun()
+    public function markAsRun(): void
     {
         $this->lastExecution = new \DateTime('now');
         $this->initializeNextExecution();

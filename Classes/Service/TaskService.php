@@ -1,4 +1,5 @@
 <?php
+
 namespace Ttree\Scheduler\Service;
 
 /*                                                                        *
@@ -10,8 +11,11 @@ namespace Ttree\Scheduler\Service;
  *                                                                        */
 
 use Assert\Assertion;
+use DateTimeInterface;
+use Ttree\Scheduler\Annotations\Schedule;
 use Ttree\Scheduler\Domain\Model\Task;
 use Ttree\Scheduler\Domain\Repository\TaskRepository;
+use Ttree\Scheduler\Task\TaskDescriptor;
 use Ttree\Scheduler\Task\TaskInterface;
 use Neos\Flow\Annotations as Flow;
 use Neos\Cache\Frontend\VariableFrontend;
@@ -20,66 +24,56 @@ use Neos\Flow\Persistence\PersistenceManagerInterface;
 use Neos\Flow\Reflection\ReflectionService;
 use Neos\Flow\Utility\Now;
 use Ttree\Scheduler\Annotations;
+use Ttree\Scheduler\Task\TaskTypeEnum;
 
-/**
- * Task Service
- */
 class TaskService
 {
-
     const TASK_INTERFACE = 'Ttree\Scheduler\Task\TaskInterface';
 
     /**
      * @Flow\Inject
-     * @var VariableFrontend
      */
-    protected $dynamicTaskLastExecutionCache;
+    protected VariableFrontend $dynamicTaskLastExecutionCache;
 
     /**
      * @Flow\Inject
-     * @var TaskRepository
      */
-    protected $taskRepository;
+    protected TaskRepository $taskRepository;
 
     /**
      * @Flow\Inject
-     * @var PersistenceManagerInterface
      */
-    protected $persistenceManager;
+    protected PersistenceManagerInterface $persistenceManager;
 
     /**
      * @Flow\Inject
-     * @var ReflectionService
      */
-    protected $reflexionService;
+    protected ReflectionService $reflexionService;
 
     /**
      * @Flow\Inject
-     * @var ObjectManagerInterface
      */
-    protected $objectManager;
+    protected ObjectManagerInterface $objectManager;
 
     /**
      * @param ObjectManagerInterface $objectManager
-     * @return array
+     * @return list<class-string>
      * @Flow\CompileStatic
      */
-    public static function getAllTaskImplementations(ObjectManagerInterface $objectManager)
+    public static function getAllTaskImplementations(ObjectManagerInterface $objectManager): array
     {
-        /** @var ReflectionService $reflectionService */
         $reflectionService = $objectManager->get(ReflectionService::class);
         return $reflectionService->getAllImplementationClassNamesForInterface(self::TASK_INTERFACE);
     }
 
     /**
      * @param ObjectManagerInterface $objectManager
-     * @return array
+     * @return array<string,array{implementation:string, expression:string, description:string}>
      * @Flow\CompileStatic
      */
-    public static function getAllDynamicTaskImplementations(ObjectManagerInterface $objectManager)
+    public static function getAllDynamicTaskImplementations(ObjectManagerInterface $objectManager): array
     {
         $tasks = [];
-        /** @var ReflectionService $reflectionService */
         $reflectionService = $objectManager->get(ReflectionService::class);
 
         foreach (self::getAllTaskImplementations($objectManager) as $className) {
@@ -94,7 +88,7 @@ class TaskService
                 'description' => ''
             ];
 
-            if($reflectionService->isClassAnnotatedWith($className, Annotations\Meta::class)) {
+            if ($reflectionService->isClassAnnotatedWith($className, Annotations\Meta::class)) {
                 /** @var Annotations\Meta $metaAnnotation */
                 $metaAnnotation = $reflectionService->getClassAnnotation($className, Annotations\Meta::class);
                 $tasks[$className]['description'] = $metaAnnotation->description;
@@ -105,56 +99,61 @@ class TaskService
     }
 
     /**
-     * @return array
+     * @return array<TaskDescriptor>
      */
-    public function getDueTasks()
+    public function getDueTasks(): array
     {
         $tasks = array_merge($this->getDuePersistedTasks(), $this->getDynamicTasks(true));
 
-        return $this->cleanupAndSortTaskList($tasks);
+        return $this->sortTaskList($tasks);
     }
 
     /**
-     * @return array
+     * @return array<TaskDescriptor>
      */
-    public function getDuePersistedTasks()
+    public function getDuePersistedTasks(): array
     {
         $tasks = [];
         foreach ($this->taskRepository->findDueTasks() as $task) {
-            /** @var Task $task */
-            $tasks[] = $this->getTaskDescriptor(TaskInterface::TYPE_PERSISTED, $task);
+            $tasks[] = TaskDescriptor::fromPersistedTask(
+                $this->persistenceManager->getIdentifierByObject($task),
+                $task
+            );
         }
         return $tasks;
     }
 
     /**
-     * @return array
+     * @return array<TaskDescriptor>
      */
-    public function getTasks()
+    public function getTasks(): array
     {
         $tasks = array_merge($this->getPersistedTasks(), $this->getDynamicTasks());
 
-        return $this->cleanupAndSortTaskList($tasks);
+        return $this->sortTaskList($tasks);
     }
 
     /**
-     * @return array
+     * @return array<TaskDescriptor>
      */
-    public function getPersistedTasks()
+    public function getPersistedTasks(): array
     {
         $tasks = [];
         foreach ($this->taskRepository->findAll() as $task) {
-            /** @var Task $task */
-            $tasks[$this->persistenceManager->getIdentifierByObject($task)] = $this->getTaskDescriptor(TaskInterface::TYPE_PERSISTED, $task);
+            assert($task instanceof Task);
+            $identifier = $this->persistenceManager->getIdentifierByObject($task);
+            $tasks[$identifier] = TaskDescriptor::fromPersistedTask(
+                $identifier,
+                $task
+            );
         }
         return $tasks;
     }
 
     /**
-     * @param boolean
-     * @return array
+     * @return array<TaskDescriptor>
      */
-    public function getDynamicTasks($dueOnly = false)
+    public function getDynamicTasks(bool $dueOnly = false): array
     {
         $tasks = [];
         $now = new Now();
@@ -163,49 +162,24 @@ class TaskService
             $task = new Task($dynamicTask['expression'], $dynamicTask['implementation'], [], $dynamicTask['description']);
             $cacheKey = md5($dynamicTask['implementation']);
             $lastExecution = $this->dynamicTaskLastExecutionCache->get($cacheKey);
+            if (!$lastExecution instanceof \DateTime) {
+                $lastExecution = null;
+            }
             if ($dueOnly && ($lastExecution instanceof \DateTime && $now < $task->getNextExecution($lastExecution))) {
                 continue;
             }
             $task->enable();
-            $taskDecriptor = $this->getTaskDescriptor(TaskInterface::TYPE_DYNAMIC, $task);
-
-            $taskDecriptor['lastExecution'] = $lastExecution instanceof \DateTime ? $lastExecution->format(\DateTime::ISO8601) : '';
-            $taskDecriptor['identifier'] = md5($dynamicTask['implementation']);
-            $tasks[$taskDecriptor['identifier']] = $taskDecriptor;
+            $taskDescriptor = TaskDescriptor::fromDynamicTask($task, $lastExecution);
+            $tasks[$taskDescriptor->identifier] = $taskDescriptor;
         }
         return $tasks;
     }
 
-    /**
-     * @param string $type
-     * @param Task $task
-     * @return array
-     */
-    public function getTaskDescriptor($type, Task $task)
-    {
-        Assertion::string($type, 'Type must be a string');
-        return [
-            'type' => $type,
-            'enabled' => $task->isEnabled() ? 'On' : 'Off',
-            'identifier' => $this->persistenceManager->getIdentifierByObject($task),
-            'expression' => $task->getExpression(),
-            'implementation' => $task->getImplementation(),
-            'nextExecution' => $task->getNextExecution() ? $task->getNextExecution()->format(\DateTime::ISO8601) : '',
-            'nextExecutionTimestamp' => $task->getNextExecution() ? $task->getNextExecution()->getTimestamp() : 0,
-            'lastExecution' => $task->getLastExecution() ? $task->getLastExecution()->format(\DateTime::ISO8601) : '',
-            'description' => $task->getDescription(),
-            'object' => $task
-        ];
-    }
 
     /**
-     * @param string $expression
-     * @param string $task
-     * @param array $arguments
-     * @param string $description
-     * @return Task
+     * @param array<mixed> $arguments
      */
-    public function create($expression, $task, array $arguments, $description)
+    public function create(string $expression, string $task, array $arguments, string $description): Task
     {
         $task = new Task($expression, $task, $arguments, $description);
         $this->assertValidTask($task);
@@ -213,56 +187,46 @@ class TaskService
         return $task;
     }
 
-    /**
-     * @param Task $task
-     */
-    public function remove(Task $task)
+    public function remove(Task $task): void
     {
         $this->taskRepository->remove($task);
     }
 
-    /**
-     * @param Task $task
-     * @param string $type
-     */
-    public function update(Task $task, $type)
+    public function update(Task $task, TaskTypeEnum $type): void
     {
         switch ($type) {
-            case TaskInterface::TYPE_DYNAMIC:
+            case TaskTypeEnum::TYPE_DYNAMIC:
                 $cacheKey = md5($task->getImplementation());
                 $this->dynamicTaskLastExecutionCache->set($cacheKey, $task->getLastExecution());
                 break;
-            case TaskInterface::TYPE_PERSISTED:
+            case TaskTypeEnum::TYPE_PERSISTED:
                 $this->taskRepository->update($task);
                 break;
         }
     }
 
     /**
-     * @param array $tasks
-     * @return array
+     * @param array<TaskDescriptor> $tasks
+     * @return array<TaskDescriptor>
      */
-    protected function cleanupAndSortTaskList(array $tasks)
+    protected function sortTaskList(array $tasks): array
     {
-        uasort($tasks, function ($a, $b) {
-            return $a['nextExecutionTimestamp'] > $b['nextExecutionTimestamp'];
-        });
-
-        array_walk($tasks, function (&$task) {
-            unset($task['nextExecutionTimestamp']);
-        });
-
+        uasort(
+            $tasks,
+            function (TaskDescriptor $a, TaskDescriptor $b) {
+                return ($a->task->getNextExecution() < $b->task->getNextExecution()) ? -1 : 1;
+            }
+        );
         return $tasks;
     }
 
-    /**
-     * @param Task $task
-     * @return boolean
-     */
-    protected function assertValidTask(Task $task)
+    protected function assertValidTask(Task $task): void
     {
         if (!class_exists($task->getImplementation())) {
-            throw new \InvalidArgumentException(sprintf('Task implementation "%s" must exist', $task->getImplementation()), 1419296545);
+            throw new \InvalidArgumentException(
+                sprintf('Task implementation "%s" must exist', $task->getImplementation()),
+                1419296545
+            );
         }
         if (!$this->reflexionService->isClassImplementationOf($task->getImplementation(), self::TASK_INTERFACE)) {
             throw new \InvalidArgumentException('Task must implement TaskInterface', 1419296485);

@@ -1,4 +1,5 @@
 <?php
+
 namespace Ttree\Scheduler\Annotations;
 
 /*                                                                        *
@@ -17,14 +18,13 @@ use Neos\Flow\Annotations as Flow;
  */
 final class Meta
 {
-
     /**
      * @var string
      */
     public $description = '';
 
     /**
-     * @param array $values
+     * @param array<string> $values
      */
     public function __construct(array $values)
     {

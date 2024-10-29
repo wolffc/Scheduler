@@ -1,4 +1,5 @@
 <?php
+
 namespace Ttree\Scheduler\Task;
 
 /*                                                                        *
@@ -16,13 +17,9 @@ use Neos\Flow\Annotations as Flow;
  */
 interface TaskInterface
 {
-
-    const TYPE_PERSISTED = 'Persisted';
-    const TYPE_DYNAMIC = 'Dynamic';
-
     /**
-     * @param array
-     * @return void
+     * @param array<mixed> $arguments
+     * @return mixed
      */
     public function execute(array $arguments = []);
 }
